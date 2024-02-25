@@ -1,0 +1,123 @@
+---
+title: "Final project ML"
+author: "Carlo Javier Chazarreta"
+date: "`r Sys.Date()`"
+output: 
+  html_document
+---
+
+Click through the tabs to explore our results
+
+##  {.tabset}
+
+```{=html}
+<style>
+body {
+text-align: justify}
+
+</style>
+```
+
+### Setup
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(caret)
+library(skimr)
+```
+
+### Data
+
+```{r message=FALSE, warning=FALSE}
+training <- read_csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+                    na = c("NA", "#DIV/0!", ""))
+testing <- read_csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+                    na = c("NA", "#DIV/0!", ""))
+
+training %>% 
+  skimr::skim()
+
+```
+
+### Exploratory Data Analisys
+
+From the data tab we can see that all the logical variables only have NAs and must be deleted to improve the model. Also, we can see that some features has a very low complete rate, so they have a lot of NAs. I check that with a plot
+
+```{r}
+# visualizing NAs
+training %>% 
+  is.na() %>%
+  reshape2::melt() %>%
+  ggplot(aes(Var2, Var1, fill = value)) + 
+  geom_raster() + 
+  scale_y_continuous(NULL, expand = c(0, 0)) +
+  scale_fill_grey(name = "", 
+                  labels = c("Present", 
+                             "Missing")) +
+  xlab("Observation") +
+  theme(axis.text.x  = element_text(size = 7, angle = 45,
+                                    hjust = 1, vjust = 1))
+
+```
+
+From the plot we can see that there are features with a complete rate of 100% and features with just few data. So the inputation methods are not useful in this case. I also checked the proportion of every category in the categorical variables and I found that the variable new_window has a very unbalanced proportion of levels (yes = 98% and no = 2%), so this variable must also be deleted in the pre-processing procedure.
+
+```{r}
+training %>%
+  # select only character, factor or variables
+  select(where(is.character) | where(is.factor)) %>%
+  
+  # calculate the proportion of unique categories in every variable
+  apply(., FUN = \(x) table(x) / length(x), MARGIN = 2)
+```
+
+### Preprocessing
+
+Based on the fact that the data has a lot of NAs the imputation methods are not useful and the features with more than 90% of NAs should be deleted to improve the modelling. So in the first step of the presprossecing process I filtered the data to get just the features that doesn't have NAs. In the second step I deleted the new_windows and ...1 variables. I applied I did it to both the training and testing dataset. To improve the speed of the modelling process I trained the model on a sample of 1000 rows selected at random from the training dataset.
+
+```{r}
+
+features <- training[sample(nrow(training), 1000), ] %>%
+  skimr::skim() %>%
+  select(skim_variable, complete_rate) %>%
+  # filter complete features
+  filter(complete_rate == 1) %>%
+  pull(skim_variable)
+
+train_df <- training[sample(nrow(training), 1000), ] %>%
+  select(all_of(features)) %>%
+  # delete new_windows and ...1 because they are near zero variance and a rowname
+  # variable respectively
+  select(-c(new_window, ...1))
+
+test_df <- testing %>%
+  select(all_of(features[!features == 'classe'])) %>%
+  select(-c(new_window, ...1))
+
+```
+
+### Model
+
+Finally I applied a random forest model because it is versatile, robust, and suitable for various classification tasks and offers some advantages such as high accuracy, robustness to outliers, and no assumption about data distribution. I selected the resampling method 'cv' in the trainControl function to apply cross-validation. The Mtry parameter controls how many features are available to be considered for each new split in every tree.
+
+#### Train the model
+
+```{r}
+fit_rf <- train(classe ~ ., data = train_df, method = 'rf', prox = TRUE,
+                trControl = trainControl(method = 'cv'))
+
+```
+
+To asses the generalization performance of the model I have estimated the out of sampling error using the k-fold cross-validation method. k-fold cross-validation is a resampling method that randomly divides the training data into k groups of approximately equal size. This process results in k estimates of the generalization error. Thus, the k-fold CV estimate is computed by averaging the k test errors, providing us with an approximation of the error we might expect on unseen data. The expected out of sample error was estimated by the accuracy measure and was about 0.96.
+
+```{r}
+fit_rf
+```
+
+#### Predicting
+
+The result of predicting the 20 provided test cases were the following:
+
+```{r}
+predict(fit_rf, test_df)
+```
